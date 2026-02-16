@@ -1,0 +1,188 @@
+Incident Chat Log — Teams Channel Export
+Channel: Engineering General Date: Tuesday, 13 January 2026
+ 
+Dev Patel (SRE) 08:47 AM Morning all. Just a heads up — I completed the node pool optimisation yesterday afternoon as planned under AB#3901. Scaled the general pool from 6 to 4 nodes (Standard_D4s_v3). All pods rescheduled cleanly overnight, no issues flagged in the morning health check.
+Tom Bradley (SRE) 08:49 AM Nice one Dev. Did the cluster autoscaler config get updated too or just the static count?
+Dev Patel (SRE) 08:51 AM Just the static minimum for now. Autoscaler is still set to max 8 so it can burst if needed. Want to see how we run at 4 for a week before we tighten the autoscaler range.
+Tom Bradley (SRE) 08:52 AM Makes sense. I’ll keep an eye on the capacity dashboards today.
+Rachel Foster (Engineering Manager) 08:55 AM Morning team. Reminder that standup is at 09:30 as usual. Also sprint review is Thursday this week not Friday — I’ve updated the calendar invite.
+James O’Neill (Support Engineer) 08:57 AM Morning! Quick one — has anyone picked up AB#4478? Client asked about the export feature timestamp formatting. Not urgent but it’s been sitting for a few days.
+Priya Sharma (Platform Developer) 08:59 AM That’s on my list James, I’ll get to it after I close out the v2.14 release notes. We pushed the agent update last night around 6pm, all green in the deployment pipeline.
+Tom Bradley (SRE) 09:01 AM What was in v2.14 Priya? I don’t think I saw the change notes.
+Priya Sharma (Platform Developer) 09:03 AM Pretty minor — the counterparty enrichment step for AB#3847. Adds reference data validation on inbound messages. Nothing structural, just an additional validation pass before messages hit the processing queue.
+James O’Neill (Support Engineer) 09:04 AM Oh nice, a few clients have been asking for better validation. Good stuff.
+Dev Patel (SRE) 09:06 AM Was that load tested? Just asking because we’re running leaner on the node pool now.
+Priya Sharma (Platform Developer) 09:07 AM Yeah it went through the standard regression suite in staging. All green. It’s a lightweight change honestly, just a lookup per message.
+Rachel Foster (Engineering Manager) 09:09 AM @Tom @Dev can one of you review AB#4521 today? The reporting service deployment needs SRE sign-off before it goes to prod later this week.
+Tom Bradley (SRE) 09:10 AM I’ll pick that up this afternoon.
+Sarah Chen (Support Engineer) 09:17 AM Hey team, just got a ticket in from Meridian Capital saying their file processing seems stuck. They submitted a batch about 40 minutes ago and nothing’s come through yet. Anyone aware of any platform issues this morning?
+James O’Neill (Support Engineer) 09:19 AM Let me check the queue, one sec.
+Tom Bradley (SRE) 09:20 AM Nothing on the alerts dashboard. Let me pull up Grafana.
+James O’Neill (Support Engineer) 09:22 AM Sarah I’ve got another one just come in from Oakwood Partners, same thing — submitted files but processing seems delayed. That’s two clients in 10 minutes.
+Sarah Chen (Support Engineer) 09:23 AM Not great. I’ll hold off replying until we know if there’s a wider issue.
+Tom Bradley (SRE) 09:26 AM Hmm, I can see processing latency has crept up on the Grafana overview. It’s not dramatically high but definitely above normal for this time of day. Let me dig in.
+James O’Neill (Support Engineer) 09:28 AM I’ve just pulled up Application Insights and the response times on the web front end are elevated too. Average is sitting around 4.2 seconds vs the usual sub-1-second. Looks like the web servers might be struggling?
+Dev Patel (SRE) 09:29 AM Could be the node pool change. If we’re running tighter on resources the web pods might be getting squeezed.
+Tom Bradley (SRE) 09:31 AM Let me check resource utilisation across the nodes before we jump to conclusions.
+Rachel Foster (Engineering Manager) 09:32 AM Standup in 2 mins everyone. Should we skip it or do we need to focus on this?
+Tom Bradley (SRE) 09:33 AM Let’s skip standup, I want to focus on this. It might be nothing but two client complaints in quick succession isn’t typical.
+Rachel Foster (Engineering Manager) 09:33 AM Agreed. Standup cancelled, everyone focus on this. Keep the channel updated.
+James O’Neill (Support Engineer) 09:36 AM Third ticket just in. Hartley Financial Group. Same symptoms — processing delays. I’m seeing a pattern here.
+Sarah Chen (Support Engineer) 09:37 AM I’m going to send a holding message to all three clients. Something like “we’re aware of processing delays and investigating.” Sound ok @Rachel?
+Rachel Foster (Engineering Manager) 09:38 AM Yes, go ahead Sarah. Keep it general for now.
+Tom Bradley (SRE) 09:41 AM OK, looked at node resource utilisation. Nodes are under some pressure — CPU averaging around 68% across the pool, memory around 72%. Higher than I’d like but not critical. The reduction from 6 to 4 nodes means we’ve got less headroom but this shouldn’t be causing the issues on its own.
+James O’Neill (Support Engineer) 09:43 AM I’ve gone into the Azure portal and I can see the SQL database DTU usage is really high. It’s at 78% which seems way above normal. I remember we had a similar issue back in October when the DB was maxing out — could this be the same thing?
+Tom Bradley (SRE) 09:45 AM Good spot James, let me look at the DB metrics properly through Grafana. 78% DTU is high for this time of day.
+Dev Patel (SRE) 09:46 AM If the DB is struggling and the nodes are tighter, it could be a compounding issue from my change yesterday. Should I scale the node pool back up?
+Tom Bradley (SRE) 09:48 AM Hold on, let’s not make changes yet. I want to understand what’s causing the DB load first. Scaling nodes won’t help if the DB is the bottleneck.
+James O’Neill (Support Engineer) 09:50 AM I’ve just looked at the App Insights dependency map and the calls from the web app to the database are averaging 3.8 seconds. That’s definitely the slow point. Everything downstream of the DB call is backed up.
+Sarah Chen (Support Engineer) 09:52 AM Fourth client just reported in. Wellington Asset Management. They’re flagging it as urgent because they’ve got end-of-day regulatory reporting that depends on the processed data.
+Tom Bradley (SRE) 09:55 AM Right, DB definitely looks like the hot spot. DTU is actually climbing — now at 82%. I can see a lot of active sessions. Let me look at what’s running.
+Rachel Foster (Engineering Manager) 09:56 AM How many clients are affected? Do we need to get ahead of this with a broader communication?
+Sarah Chen (Support Engineer) 09:57 AM Four so far with tickets raised. But if processing is generally delayed, it’s probably affecting everyone who’s submitted files this morning.
+James O’Neill (Support Engineer) 09:59 AM I’ve pulled up the connection count graph in Azure Monitor. Active connections have been climbing steadily since about 6pm yesterday. Normally we sit around 120-150 connections in the morning, we’re at 340 right now. Something is definitely hammering the DB.
+Tom Bradley (SRE) 10:01 AM Since 6pm yesterday? That’s interesting. What changed at 6pm…
+Dev Patel (SRE) 10:02 AM My node pool change was around 3pm, so before the connection climb started. Might not be my change then.
+Priya Sharma (Platform Developer) 10:03 AM v2.14 went out at about 6pm. But that’s just a validation step, it shouldn’t affect database connections at all. The enrichment lookup doesn’t even hit the main database — it uses an in-memory reference dataset.
+James O’Neill (Support Engineer) 10:05 AM Could it be a connection pool leak? I’ve seen articles about that kind of thing with .NET apps. If the agent isn’t releasing connections properly after the validation step maybe they’re building up?
+Tom Bradley (SRE) 10:07 AM It’s possible but let’s not speculate yet. I’m going to look at the query activity to see what’s actually using these connections.
+James O’Neill (Support Engineer) 10:10 AM Also FYI I just remembered the SSL cert renewal happened on Friday for the API gateway. I know it shouldn’t affect internal services but timing-wise it’s in the window. Sometimes cert changes cause weird TLS handshake issues that look like slowness.
+Tom Bradley (SRE) 10:12 AM The cert renewal was on the external gateway only, internal service mesh uses separate certs managed by cert-manager. Shouldn’t be related.
+James O’Neill (Support Engineer) 10:13 AM Fair enough. Just trying to think of anything that changed recently.
+Dev Patel (SRE) 10:16 AM @Tom I’ve been looking at the node metrics more carefully. Two of the four nodes are running really hot — CPU at 85% and 91%. The other two are more reasonable. Looks like the pod distribution might be uneven. The scheduler might have packed things badly after the scale-down.
+Tom Bradley (SRE) 10:18 AM OK noted. That’s not ideal but the pods on those nodes are still running, they’re not being evicted. Let me stay focused on the DB for now since that seems like the primary bottleneck.
+Rachel Foster (Engineering Manager) 10:20 AM Can someone give me a summary I can share upward? I’ve got the VP of Engineering asking what’s happening.
+Tom Bradley (SRE) 10:22 AM Summary: We’re seeing elevated processing latency affecting multiple clients. Initial investigation shows the SQL database is under high load with connection counts significantly above normal. We’re investigating the root cause. No data loss, just delays. Approximately 4 clients have reported so far but likely broader impact.
+Rachel Foster (Engineering Manager) 10:23 AM Thanks Tom.
+James O’Neill (Support Engineer) 10:25 AM Guys I’ve just found something. In the App Insights exceptions log there’s a spike in SqlException errors starting from about 18:30 yesterday. The message is “Timeout expired. The timeout period elapsed prior to obtaining a connection from the pool.” That really sounds like a connection pool issue.
+Tom Bradley (SRE) 10:27 AM That’s actually useful James. But timeout getting a connection from the pool usually means the pool is exhausted because existing connections are being held too long, not necessarily a leak. Something is running long-running queries or not releasing connections promptly.
+Priya Sharma (Platform Developer) 10:28 AM The agent doesn’t hold connections long. It’s a quick read, process, write pattern. Each message takes maybe 200ms of DB time normally.
+Sarah Chen (Support Engineer) 10:31 AM Another update — Meridian Capital’s account manager has emailed Rachel directly. They’re talking about SLA credits. This is escalating quickly.
+James O’Neill (Support Engineer) 10:33 AM I’ve been digging into the App Insights request traces. I can see that a lot of requests from the message-processor service are failing and then being retried almost immediately. Like the same message ID appearing multiple times. Is there a retry storm happening?
+Tom Bradley (SRE) 10:35 AM That would explain the connection exhaustion. If the agent is failing and retrying aggressively, each retry would grab a connection, fail, retry, grab another connection… Let me look at the agent service specifically.
+Dev Patel (SRE) 10:37 AM Has anyone looked at the Service Bus queue? If the agent is failing to process messages they’d be going back to the queue and building up.
+Tom Bradley (SRE) 10:39 AM Good call. Checking now.
+Tom Bradley (SRE) 10:42 AM Service Bus dead letter queue has about 2,400 messages in it. Active queue has 18,000+ pending. Normal backlog at this time would be maybe 200-500. This is significantly backed up.
+James O’Neill (Support Engineer) 10:44 AM 18,000 messages?! That explains why clients are waiting forever. Nothing’s getting through.
+Sarah Chen (Support Engineer) 10:45 AM To clarify — is nothing getting through at all, or is it just slow? Some clients have mentioned receiving partial results.
+Tom Bradley (SRE) 10:47 AM It’s not completely stopped. Messages are being processed but the agent pods keep crashing and restarting, so there are windows where processing happens before they crash again. It’s a drip feed rather than a complete outage.
+Rachel Foster (Engineering Manager) 10:48 AM “Crashing and restarting” — is that new information? That sounds more serious than just DB load.
+Tom Bradley (SRE) 10:49 AM Yeah, I’m pivoting my investigation. Let me look at the pod status for the message-processor deployment.
+James O’Neill (Support Engineer) 10:51 AM I can see in Azure Monitor container insights that the message-processor pods have restarted 47 times since midnight. Is that normal? I don’t have a baseline for comparison.
+Tom Bradley (SRE) 10:52 AM That is absolutely not normal. Normal would be zero restarts.
+Priya Sharma (Platform Developer) 10:53 AM Some restarts can happen if the agent picks up a bad message and crashes. We’ve got a poison message handler but it’s not bulletproof. 47 seems high though.
+Dev Patel (SRE) 10:55 AM If the pods are crashing that much on 4 nodes, the nodes are probably burning CPU just on container scheduling and restarts. That could explain why two of my nodes are running so hot. Maybe I should scale back to 6 nodes to give them breathing room?
+Tom Bradley (SRE) 10:56 AM Not yet Dev. I want to understand WHY they’re crashing first. Adding nodes won’t help if the pods are going to crash anyway.
+James O’Neill (Support Engineer) 10:58 AM Has anyone checked if there’s a specific message type or client that’s causing the crashes? Maybe one client sent a bad file that’s poisoning the queue?
+Priya Sharma (Platform Developer) 10:59 AM That’s a good thought actually. If one malformed input is crashing the agent, the retry logic would keep picking it up. Let me check the dead letter queue for patterns.
+Tom Bradley (SRE) 11:02 AM I’ve got the pod events. Here we go. The restart reason is OOMKilled. Every single restart is OOMKilled.
+Priya Sharma (Platform Developer) 11:03 AM OOMKilled? That’s a memory issue, not a bad message.
+Tom Bradley (SRE) 11:04 AM Correct. The pods are exceeding their memory limits and Kubernetes is killing them.
+James O’Neill (Support Engineer) 11:05 AM OOM as in Out Of Memory? So the application is using too much RAM? Could that be a memory leak? I’ve read that .NET apps can have issues with garbage collection under heavy load. Maybe the GC isn’t keeping up?
+Dev Patel (SRE) 11:07 AM What are the memory limits set to on the agent pods?
+Tom Bradley (SRE) 11:08 AM Limits are set to 1Gi per pod, request is 512Mi. That hasn’t changed recently. Let me look at the memory consumption timeline.
+James O’Neill (Support Engineer) 11:10 AM I’ve just had a look at the container insights memory graph. It looks like the pods climb to about 950MB really quickly after starting, then get killed. Then they restart and do the same thing again. It’s like a sawtooth pattern.
+Tom Bradley (SRE) 11:11 AM That’s consistent with OOMKill. They start up, consume memory rapidly, hit the limit, get killed, repeat.
+Priya Sharma (Platform Developer) 11:12 AM But 1Gi has been fine for months. The agent usually runs at about 300-400MB. What’s using the extra memory?
+Dev Patel (SRE) 11:14 AM @Tom could the nodes being tighter on memory overall cause the OOM threshold to hit earlier? Like if the node is under memory pressure, maybe the OOMKiller is more aggressive?
+Tom Bradley (SRE) 11:16 AM No, Kubernetes OOMKill is based on the container’s own memory limit, not node pressure. If the limit is 1Gi the pod gets killed at 1Gi regardless of what else is running on the node. This is the pod itself using too much memory.
+Rachel Foster (Engineering Manager) 11:17 AM So we’ve gone from “database is slow” to “agent pods are crashing due to memory.” That’s a significant shift. What’s causing the memory usage?
+Tom Bradley (SRE) 11:19 AM That’s what I’m trying to figure out now. Let me look at when the memory consumption pattern changed.
+James O’Neill (Support Engineer) 11:20 AM Unrelated but can someone approve the AB#4601 PR for the client notification templates? @Priya I think you were reviewing it. Sorry to interrupt but it’s been pending for two days and the client’s chasing.
+Priya Sharma (Platform Developer) 11:21 AM Not now James, we’re in the middle of something here.
+James O’Neill (Support Engineer) 11:22 AM Sorry, yeah of course. Just saw it in my queue and thought I’d mention it.
+Tom Bradley (SRE) 11:24 AM Right, I’ve pulled the memory consumption chart for the message-processor pods over the last 7 days.
+Tom Bradley (SRE) 11:25 AM There is a very clear step change. Up until yesterday at approximately 18:15, pods were running steady at 300-380MB. After 18:15 yesterday, every pod starts climbing to 900MB+ within minutes of starting and then gets OOMKilled.
+Dev Patel (SRE) 11:26 AM 18:15 yesterday. That’s right when v2.14 was deployed.
+Tom Bradley (SRE) 11:27 AM Priya, I need you to look at this. What exactly does the enrichment step in v2.14 do with memory? You said it loads an in-memory reference dataset?
+Priya Sharma (Platform Developer) 11:29 AM Yes, but it’s just counterparty reference data. In staging it was maybe 15-20MB. The code loads it, validates the message against it, then discards it after processing.
+Tom Bradley (SRE) 11:30 AM Loads it per message?
+Priya Sharma (Platform Developer) 11:31 AM Yes. Each message loads the reference dataset, does the validation, completes, GC cleans up. It was designed to be stateless.
+Tom Bradley (SRE) 11:33 AM How big is the production reference dataset?
+Priya Sharma (Platform Developer) 11:34 AM I… don’t actually know off the top of my head. It’s whatever’s in the counterparty reference table. It’ll be bigger than staging obviously.
+Tom Bradley (SRE) 11:35 AM Can you check?
+Priya Sharma (Platform Developer) 11:38 AM Just checked. The production counterparty reference table has about 340,000 records. Staging has 2,000. When loaded into memory as objects that’s going to be significantly larger in production.
+Tom Bradley (SRE) 11:39 AM There we go. So every single message that comes in, the agent loads 340,000 records into memory, does a validation, then relies on garbage collection to clean it up before the next message arrives?
+Priya Sharma (Platform Developer) 11:40 AM When you put it like that, yes. In staging with 2,000 records it was trivial. In production, each load is probably 400-500MB. And if messages are arriving faster than GC can clean up the previous load…
+Tom Bradley (SRE) 11:41 AM The pod runs out of memory and gets killed. And then it restarts, picks up messages from the queue, immediately loads 500MB, picks up another message, loads another 500MB, boom. OOMKilled again.
+James O’Neill (Support Engineer) 11:42 AM So it’s not a memory leak or a GC issue, it’s just that the code is loading a massive dataset that’s way too big for the container’s memory limit?
+Tom Bradley (SRE) 11:43 AM Essentially yes. The design works fine with a small dataset. With production data it’s not viable.
+Rachel Foster (Engineering Manager) 11:44 AM So the deployment is the root cause? Why wasn’t this caught in testing?
+Priya Sharma (Platform Developer) 11:46 AM Staging doesn’t have production-scale reference data. The test passed because 2,000 records is nothing. We didn’t do a specific load test with production-sized data.
+Dev Patel (SRE) 11:47 AM So to be clear, my node pool change didn’t cause this?
+Tom Bradley (SRE) 11:48 AM No Dev, the node pool change is unrelated. This would have happened on 6 nodes or 60 nodes. The pod memory limit is the constraint, not the node count.
+James O’Neill (Support Engineer) 11:49 AM And the database CPU spike we were chasing earlier?
+Tom Bradley (SRE) 11:50 AM Symptom, not cause. The agent pods crash and restart, the retry logic in the Service Bus kicks in, messages get redelivered, pods crash again, more retries. All those retries create a storm of database connections which pushed the DB DTU up. Fix the agent and the DB should settle down.
+James O’Neill (Support Engineer) 11:51 AM So everything we looked at for the first two hours was basically a wild goose chase?
+Tom Bradley (SRE) 11:52 AM Not entirely. The DB symptoms and the retry patterns led us to the agent, which led us to the OOMKills. It just took us a while to get there.
+Rachel Foster (Engineering Manager) 11:54 AM OK, so what are our options right now? We need to stop the bleeding.
+Tom Bradley (SRE) 11:55 AM Two options. One: roll back to v2.13, which removes the enrichment step entirely and brings memory back to normal. Two: increase the pod memory limit to accommodate the larger dataset. I’d recommend option one — rollback. Increasing the memory limit is a sticking plaster. Even if we set it to 2Gi the design of loading 340k records per message is fundamentally flawed. It’ll cause problems at scale again.
+Priya Sharma (Platform Developer) 11:57 AM Agree on rollback. I need to redesign the enrichment step to cache the reference data rather than loading it per message. That’s not a 5-minute fix, it needs a proper implementation and load testing.
+Rachel Foster (Engineering Manager) 11:58 AM How long does the rollback take?
+Dev Patel (SRE) 11:59 AM I can do it through ArgoCD. Rollback to v2.13 should take about 15-20 minutes including the new pods stabilising.
+Tom Bradley (SRE) 12:00 PM Go ahead Dev.
+Dev Patel (SRE) 12:01 PM On it. Initiating rollback in ArgoCD now.
+James O’Neill (Support Engineer) 12:02 PM Should I update the clients? What should I tell them?
+Sarah Chen (Support Engineer) 12:03 PM I’ll handle client comms James. Tom, can you give me a non-technical summary I can send?
+Tom Bradley (SRE) 12:05 PM Something like: “We identified a software issue introduced in last night’s maintenance update that is causing processing delays. We are reverting the update now and expect normal processing to resume within 30 minutes. No data has been lost — all submitted files are queued and will be processed once the fix is in place.”
+Sarah Chen (Support Engineer) 12:06 PM Perfect, sending that now to all affected clients.
+James O’Neill (Support Engineer) 12:08 PM Should we also send it proactively to clients who haven’t complained yet? If processing has been slow for everyone since last night, there might be others who just haven’t noticed or reported it yet.
+Rachel Foster (Engineering Manager) 12:09 PM Good thinking James. Sarah, send it to all active clients as a general service notification.
+Sarah Chen (Support Engineer) 12:10 PM Will do.
+Dev Patel (SRE) 12:12 PM Rollback submitted. ArgoCD is syncing now. Old pods are terminating and v2.13 pods are starting up.
+James O’Neill (Support Engineer) 12:14 PM Oh quick unrelated question while we wait — does anyone know if the conference room on 3rd floor has been fixed? The screen wasn’t working yesterday and I’ve got a client demo at 2pm.
+Rachel Foster (Engineering Manager) 12:15 PM Not now James. Check with facilities.
+James O’Neill (Support Engineer) 12:16 PM Sorry. Right.
+Dev Patel (SRE) 12:18 PM New pods are up. 4 replicas running. All showing Ready status.
+Tom Bradley (SRE) 12:19 PM Watching the memory graphs. v2.13 pods are sitting at 320MB. That’s back to normal baseline. No OOMKills.
+Tom Bradley (SRE) 12:22 PM Service Bus queue is starting to drain. Active message count dropping. 18,000 was our peak, we’re at 16,200 now and falling steadily.
+James O’Neill (Support Engineer) 12:24 PM App Insights response times are already coming down. Front end latency is back under 2 seconds. Still above normal but trending in the right direction.
+Dev Patel (SRE) 12:26 PM DB DTU has dropped to 61%. It was at 84% at its peak. Definitely the retry storm settling down.
+Tom Bradley (SRE) 12:30 PM Processing throughput is recovering. Messages being processed at about 400/min which is close to normal capacity. At this rate the backlog should clear in about 40-45 minutes.
+Sarah Chen (Support Engineer) 12:33 PM Meridian Capital just confirmed they’ve received their first batch of processed files. They’re still waiting on the rest but they can see things moving.
+James O’Neill (Support Engineer) 12:35 PM Oakwood Partners confirming the same. Processing is working again.
+Rachel Foster (Engineering Manager) 12:37 PM Great. Tom, can you keep monitoring until the backlog is fully cleared? I want to make sure we’re confident it’s resolved before we stand down.
+Tom Bradley (SRE) 12:38 PM Will do.
+James O’Neill (Support Engineer) 12:40 PM Just to double check — do we need to do anything about the 2,400 messages in the dead letter queue? Those are messages that failed too many times right? Will they get processed automatically or do they need manual intervention?
+Tom Bradley (SRE) 12:42 PM Good question. Dead lettered messages won’t retry automatically. @Priya, what’s the procedure for reprocessing dead letter messages?
+Priya Sharma (Platform Developer) 12:44 PM We’ve got a utility script that can move them back to the active queue. I’ll run it once the backlog clears so we don’t add to the pile. Should get them all reprocessed.
+Tom Bradley (SRE) 12:45 PM Sounds good. Let’s wait until the active queue is back to normal first.
+Dev Patel (SRE) 12:48 PM Reminder: all-hands at 14:00 today. Are we still going or should we skip given the incident?
+Rachel Foster (Engineering Manager) 12:49 PM All-hands goes ahead as planned. I might reference the incident briefly but no need for the team to skip it. We should be stable by then.
+James O’Neill (Support Engineer) 12:52 PM I’ve been looking at the App Insights traffic data now that things are calming down and I just want to note — the traffic volumes this morning weren’t unusual at all. I thought earlier it looked higher than normal but comparing with last Tuesday it’s almost identical. So that rules out any client-side traffic spike theory.
+Tom Bradley (SRE) 12:54 PM Yeah, confirmed. This was entirely caused by the v2.14 deployment. The higher apparent traffic was actually the retry storm inflating the request counts.
+Sarah Chen (Support Engineer) 12:58 PM Wellington Asset Management just confirmed their regulatory files have been processed. They’re happy. That was the most time-sensitive one.
+Tom Bradley (SRE) 13:05 PM Queue backlog update: down to 4,300 active messages. Draining steadily. DB DTU at 42% which is normal. Node CPU has settled too — no nodes above 55% now.
+Dev Patel (SRE) 13:08 PM So the nodes are fine at 4. The hot nodes I was seeing earlier were just burning CPU on the constant pod restart cycle, not because we didn’t have enough nodes.
+Tom Bradley (SRE) 13:09 PM Exactly. The OOMKill → restart → OOMKill loop was generating a lot of scheduling overhead. Now that the pods are stable the cluster is well within capacity.
+James O’Neill (Support Engineer) 13:12 PM Is it worth bumping the memory limits on the agent pods as a safety net anyway? Even with v2.13 running fine, if someone accidentally deploys v2.14 again we’d hit the same issue.
+Tom Bradley (SRE) 13:14 PM Not right now. I’d rather we fix the root cause properly — Priya’s redesign of the enrichment step — and put proper safeguards in place. Raising limits masks the problem.
+Priya Sharma (Platform Developer) 13:16 PM Agreed. I’m going to redesign it to load the reference data once at startup and cache it, with a periodic refresh. That way each message just does a lookup against the cache instead of loading 340k records from scratch. I’ll also add a size check so if the dataset grows beyond a threshold it logs a warning.
+Tom Bradley (SRE) 13:18 PM That sounds much better. And we need to talk about load testing. This should have been caught before it hit production.
+Priya Sharma (Platform Developer) 13:19 PM Fair point. Staging doesn’t reflect production data volumes. That’s a gap we’ve known about for a while.
+Rachel Foster (Engineering Manager) 13:21 PM Let’s capture all of this in the post-incident review. Tom, can you open the PIR?
+Tom Bradley (SRE) 13:22 PM Already on it. I’m creating it as AB#4638.
+Tom Bradley (SRE) 13:25 PM Queue is at 1,100 messages. Almost cleared.
+Sarah Chen (Support Engineer) 13:28 PM All clients who raised tickets have confirmed they’re back to normal. I’m going to send a follow-up to the broad client notification confirming resolution.
+James O’Neill (Support Engineer) 13:30 PM Nice one. Also @Priya when this all settles down can you look at AB#4478? The timestamp formatting thing. No rush obviously but the client asked again this morning before all the excitement started.
+Priya Sharma (Platform Developer) 13:31 PM Yeah I’ll pick it up tomorrow.
+Tom Bradley (SRE) 13:35 PM Queue fully drained. All metrics back to normal baselines. Processing throughput, DB DTU, node CPU, memory, response times — all green. I’m going to leave the monitoring up for the next couple of hours to make sure nothing drifts but I’m confident we’re stable.
+Rachel Foster (Engineering Manager) 13:37 PM Excellent. Well done everyone. To summarise what I understand — the v2.14 agent deployment last night introduced a memory-intensive enrichment step that worked fine in staging but overwhelmed the pods in production due to the much larger reference dataset. This caused the agents to crash repeatedly, which created a backlog and hammered the database. Rollback to v2.13 has resolved it. Correct?
+Tom Bradley (SRE) 13:39 PM That’s an accurate summary Rachel.
+Dev Patel (SRE) 13:40 PM And the node pool optimisation was not a contributing factor, just to close that loop.
+Tom Bradley (SRE) 13:41 PM Confirmed. The node pool change had no bearing on this incident.
+Rachel Foster (Engineering Manager) 13:43 PM Understood. PIR tomorrow at 10:00. I’ve sent the invite. Let’s make sure we cover the testing gap, the alerting gap — we should have been alerted on the OOMKills before clients reported issues — and the deployment review process.
+Tom Bradley (SRE) 13:45 PM Agreed. I also want to discuss canary deployments. If we’d rolled v2.14 out to one pod first and watched for 30 minutes, we’d have caught this before it affected the full fleet.
+Priya Sharma (Platform Developer) 13:46 PM Makes sense. I’ll have a proposal for the redesigned enrichment step ready for the PIR so we can discuss the technical approach too.
+James O’Neill (Support Engineer) 13:48 PM Just out of curiosity — how come the pods crashed overnight but nobody noticed until clients complained this morning? Were there no alerts?
+Tom Bradley (SRE) 13:50 PM That’s a great question and honestly a gap we need to address. We have alerts on pod health but the OOMKill restarts were happening fast enough that the pods were showing as Running most of the time. The health check only sees that the pod is alive, not that it’s restarted 47 times. We need an alert specifically on restart count.
+Dev Patel (SRE) 13:51 PM I can set that up this afternoon. Alert on any pod with more than 3 restarts in an hour.
+Tom Bradley (SRE) 13:52 PM That would be great. Let’s do 5 restarts as the threshold to avoid false positives from one-off crashes.
+Dev Patel (SRE) 13:53 PM 5 restarts per hour, got it. I’ll have it done before end of day.
+Sarah Chen (Support Engineer) 13:55 PM Final client update sent. Closing out the support tickets now. Thanks everyone for the quick turnaround once we found the issue.
+James O’Neill (Support Engineer) 13:56 PM Yeah fair play to Tom for tracing it through all the symptoms to the actual cause. I was convinced it was the database for a while there.
+Tom Bradley (SRE) 13:57 PM It was a team effort. James your connection count observation was actually useful — the 6pm timing was a key clue that eventually pointed us to the deployment.
+Rachel Foster (Engineering Manager) 13:59 PM Alright, I think we can stand down from the incident. Tom’s monitoring for drift, Dev’s setting up the restart alert, Priya’s working on the fix. See everyone at the all-hands in an hour. Good work.
+Tom Bradley (SRE) 14:12 PM Final update: all queues clear, all metrics nominal, no drift observed. Marking the incident as resolved. Full analysis in the PIR tomorrow.
+ 
+End of exported chat log
